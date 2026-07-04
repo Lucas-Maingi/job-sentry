@@ -5,10 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
-
 
 # ── Status Enums ─────────────────────────────────────────────────────────
 
@@ -32,19 +30,19 @@ class Job(BaseModel):
     location: str = "Remote"
     description: str
     url: str
-    
+
     # AI Triage & Parsing
     match_score: float = 0.0
     match_reasoning: str = ""
     status: JobStatus = JobStatus.DISCOVERED
-    
+
     # Auto-fill drafts
-    cover_letter: Optional[str] = None
+    cover_letter: str | None = None
     custom_answers: dict[str, str] = Field(default_factory=dict)
-    
+
     # Audit log timestamps
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    applied_at: Optional[datetime] = None
+    applied_at: datetime | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

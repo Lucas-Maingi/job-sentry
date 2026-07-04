@@ -8,19 +8,17 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
 from job_sentry import __version__
-from job_sentry.config import settings
-from job_sentry.models import Job, JobStatus, JobSearchQuery
-from job_sentry.store import JobStore
-from job_sentry.scraper import JobScraper
-from job_sentry.copilot import JobCopilot
 from job_sentry.browser import FormFiller
+from job_sentry.config import settings
+from job_sentry.copilot import JobCopilot
 from job_sentry.emails import EmailMonitor
+from job_sentry.models import Job, JobSearchQuery, JobStatus
+from job_sentry.scraper import JobScraper
+from job_sentry.store import JobStore
 
 # ── Lifespan & Dependency Management ─────────────────────────────────────
 
@@ -57,26 +55,26 @@ async def execute_job_search_and_triage(keywords: str, location: str, store: Job
         logging.info(f"Triggering scrape for '{keywords}' in location '{location}'...")
         scraper = JobScraper()
         copilot = JobCopilot()
-        
+
         # 1. Fetch search listings
         listings = scraper.search_jobs(keywords, location)
-        
+
         for job in listings:
             # Check if this job has already been scraped by URL
             existing = store.get_job_by_url(job.url)
             if existing:
                 continue
-                
+
             # 2. Evaluate skills match & draft letters
             scored_job = copilot.evaluate_and_draft(job)
-            
+
             # 3. Transition to DRAFTING if high match, otherwise keep DISCOVERED
             if scored_job.match_score >= 60.0:
                 scored_job.status = JobStatus.DRAFTING
-                
+
             # 4. Save to SQLite store
             store.save_job(scored_job)
-            
+
         logging.info("Scrape and AI triage completed successfully.")
     except Exception as e:
         logging.error(f"Background triage worker error: {str(e)}")
@@ -92,7 +90,7 @@ async def health():
 
 @app.post("/search", tags=["copilot"])
 async def trigger_search(
-    query: JobSearchQuery, 
+    query: JobSearchQuery,
     background_tasks: BackgroundTasks,
     store: JobStore = Depends(get_store)
 ):
@@ -122,7 +120,7 @@ async def apply_to_job(job_id: str, store: JobStore = Depends(get_store)):
     # Launch browser automation
     filler = FormFiller()
     success = filler.auto_fill_application(job, resume_path="Lucas_Resume.pdf")
-    
+
     if success:
         job.status = JobStatus.APPLIED
         store.save_job(job)

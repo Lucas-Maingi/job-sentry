@@ -7,10 +7,11 @@ and log status updates inside the SQLite pipeline.
 
 from __future__ import annotations
 
-import imaplib
 import email
+import imaplib
 import logging
 from typing import Any
+
 from job_sentry.config import settings
 from job_sentry.models import JobStatus
 from job_sentry.store import JobStore
@@ -42,7 +43,7 @@ class EmailMonitor:
             mail = imaplib.IMAP4_SSL(settings.email_imap_server)
             mail.login(self.username, settings.email_password)
             mail.select("inbox")
-            
+
             # Search for unread emails containing keywords
             status, messages = mail.search(None, '(UNSEEN)')
             if status != "OK":
@@ -52,14 +53,14 @@ class EmailMonitor:
                 status, data = mail.fetch(num, "(RFC822)")
                 if status != "OK":
                     continue
-                
+
                 raw_email = data[0][1]
                 msg = email.message_from_bytes(raw_email)
-                
+
                 subject = msg.get("Subject", "")
                 sender = msg.get("From", "")
                 body = ""
-                
+
                 if msg.is_multipart():
                     for part in msg.walk():
                         if part.get_content_type() == "text/plain":
@@ -85,28 +86,28 @@ class EmailMonitor:
             mail.logout()
         except Exception as e:
             logging.error(f"IMAP check failed: {str(e)}")
-            
+
         return updates
 
-    def categorize_email(self, content: str) -> Optional[JobStatus]:
+    def categorize_email(self, content: str) -> JobStatus | None:
         """Classify email text into a Pipeline JobStatus category."""
         text = content.lower()
-        
+
         # 1. Offer check
         if any(term in text for term in ["offer letter", "congratulations", "pleased to offer", "official offer"]):
             return JobStatus.OFFER
-            
+
         # 2. Interview check
         if any(term in text for term in ["interview", "schedule", "chat", "meet with", "availability", "time to connect"]):
             return JobStatus.INTERVIEWING
-            
+
         # 3. Rejection check
         if any(term in text for term in ["thank you for your interest", "not moving forward", "pursue other candidates", "unfortunately"]):
             return JobStatus.REJECTED
-            
+
         return None
 
-    def _find_matching_company(self, sender: str) -> Optional[Any]:
+    def _find_matching_company(self, sender: str) -> Any | None:
         """Lookup job in database based on sender name/email address patterns."""
         sender_lower = sender.lower()
         all_jobs = self.store.get_all_jobs()
@@ -118,22 +119,22 @@ class EmailMonitor:
     def _check_mock(self) -> list[dict[str, str]]:
         """Simulates finding recruiter update emails for testing."""
         updates = []
-        
+
         # In mock mode, we trigger an interview invite from CognitiveFlow (which we scraped in mock database)
         all_jobs = self.store.get_all_jobs()
         cognitive_jobs = [j for j in all_jobs if j.company == "CognitiveFlow Inc."]
-        
+
         if cognitive_jobs and cognitive_jobs[0].status == JobStatus.DISCOVERED:
             job = cognitive_jobs[0]
             # Transition status
             job.status = JobStatus.INTERVIEWING
             self.store.save_job(job)
-            
+
             updates.append({
                 "company": job.company,
                 "subject": "Interview Request: AI Application Engineer",
                 "new_status": JobStatus.INTERVIEWING.value
             })
             logging.info(f"[MOCK EMAIL MONITOR] Discovered update: {job.company} -> INTERVIEWING")
-            
+
         return updates

@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Optional
-from playwright.sync_api import sync_playwright, Browser, Page
+
+from playwright.sync_api import Page, sync_playwright
+
 from job_sentry.models import Job
 
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +22,7 @@ class FormFiller:
         if self.mock_mode:
             logging.info("JobSentry FormFiller initialized in MOCK mode (no browser GUI allocated).")
 
-    def auto_fill_application(self, job: Job, resume_path: Optional[str] = None) -> bool:
+    def auto_fill_application(self, job: Job, resume_path: str | None = None) -> bool:
         """Run the browser automation sequence for the given job.
 
         Returns True if the form was successfully auto-filled/submitted.
@@ -30,14 +31,14 @@ class FormFiller:
             return self._auto_fill_mock(job, resume_path)
         return self._auto_fill_real(job, resume_path)
 
-    def _auto_fill_real(self, job: Job, resume_path: Optional[str] = None) -> bool:
+    def _auto_fill_real(self, job: Job, resume_path: str | None = None) -> bool:
         """Launches a live Playwright browser session to auto-fill forms."""
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=self.headless)
                 context = browser.new_context(viewport={"width": 1280, "height": 800})
                 page = context.new_page()
-                
+
                 logging.info(f"Navigating to job portal url: {job.url}")
                 page.goto(job.url, timeout=30000)
                 page.wait_for_load_state("networkidle")
@@ -47,7 +48,7 @@ class FormFiller:
                 self._fill_input_if_exists(page, ["last name", "lastname", "last_name"], "Maingi")
                 self._fill_input_if_exists(page, ["email", "e-mail"], "maingilucas0@gmail.com")
                 self._fill_input_if_exists(page, ["phone", "tel", "mobile"], "+254712345678")
-                
+
                 # 2. Upload resume if path supplied
                 if resume_path and os.path.exists(resume_path):
                     file_input = page.query_selector("input[type='file']")
@@ -69,13 +70,13 @@ class FormFiller:
                 # In production, we check if captcha exists or if page requires manual click.
                 # If so, we'd pause for operator input if headless=False:
                 # time.sleep(10) # operator completes captcha
-                
+
                 # Click apply/submit button
                 submit_selectors = [
-                    "button[type='submit']", "input[type='submit']", 
+                    "button[type='submit']", "input[type='submit']",
                     "button:has-text('Submit')", "button:has-text('Apply')"
                 ]
-                
+
                 submitted = False
                 for sel in submit_selectors:
                     btn = page.query_selector(sel)
@@ -88,7 +89,7 @@ class FormFiller:
 
                 browser.close()
                 return submitted
-                
+
         except Exception as e:
             logging.error(f"Playwright execution encountered error: {str(e)}")
             return False
@@ -109,20 +110,20 @@ class FormFiller:
                     el.fill(value)
                     return
 
-    def _auto_fill_mock(self, job: Job, resume_path: Optional[str] = None) -> bool:
+    def _auto_fill_mock(self, job: Job, resume_path: str | None = None) -> bool:
         """Simulates form fills logging matched fields and submittal events."""
         logging.info(f"[MOCK FORM FILLER] Accessing job URL: {job.url}")
         time.sleep(0.5)
-        
+
         logging.info("[MOCK FORM FILLER] Autofilled Name: Lucas Maingi")
         logging.info("[MOCK FORM FILLER] Autofilled Email: maingilucas0@gmail.com")
-        
+
         if resume_path:
             logging.info(f"[MOCK FORM FILLER] Uploaded resume from path: {resume_path}")
-            
+
         if job.cover_letter:
             logging.info("[MOCK FORM FILLER] Autofilled cover letter draft.")
-            
+
         for q, a in job.custom_answers.items():
             logging.info(f"[MOCK FORM FILLER] Answered custom question: '{q}' -> '{a[:30]}...'")
 

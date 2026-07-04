@@ -11,7 +11,7 @@ def test_scraper_defaults_to_mock_when_no_key():
 def test_scraper_mock_search_returns_listings():
     scraper = JobScraper()
     jobs = scraper.search_jobs("AI Engineer")
-    
+
     assert len(jobs) >= 1
     # Check that it returns valid Job schemas
     assert jobs[0].title is not None
@@ -21,7 +21,7 @@ def test_scraper_mock_search_returns_listings():
 
 def test_scraper_mock_keyword_filtering():
     scraper = JobScraper()
-    
+
     # Search specifically for WhatsApp
     whatsapp_jobs = scraper.search_jobs("WhatsApp")
     assert len(whatsapp_jobs) == 1

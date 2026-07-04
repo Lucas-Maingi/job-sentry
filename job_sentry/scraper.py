@@ -7,8 +7,9 @@ falling back to a local mock aggregator for sandbox testing.
 from __future__ import annotations
 
 import logging
+
 import httpx
-from typing import Any
+
 from job_sentry.config import settings
 from job_sentry.models import Job
 
@@ -34,19 +35,19 @@ class JobScraper:
         """Fetch search results from Serper API and parse into Job schemas."""
         query = f"{keywords} {location} job postings"
         url = "https://google.serper.dev/search"
-        
+
         headers = {
             "X-API-KEY": self.api_key,
             "Content-Type": "application/json"
         }
-        
+
         payload = {"q": query}
         jobs: list[Job] = []
-        
+
         try:
             with httpx.Client() as client:
                 resp = client.post(url, json=payload, headers=headers, timeout=10.0)
-            
+
             if resp.status_code == 200:
                 results = resp.json()
                 # Parse organic Google search results
@@ -55,7 +56,7 @@ class JobScraper:
                     title = result.get("title", f"AI Role {idx}")
                     snippet = result.get("snippet", "Detailed description not found.")
                     link = result.get("link", f"https://example.com/job-{idx}")
-                    
+
                     # Deduce company name from title or snippet
                     company = "Unknown Company"
                     if " at " in title:
@@ -76,7 +77,7 @@ class JobScraper:
             else:
                 logging.error(f"Serper API returned status {resp.status_code}: {resp.text}")
                 return self._search_mock(keywords, location)
-                
+
         except Exception as e:
             logging.error(f"Serper scraping failed: {str(e)}")
             return self._search_mock(keywords, location)
@@ -116,7 +117,7 @@ class JobScraper:
                 "url": "https://mobilempesa.example.com/jobs/whatsapp-mpesa-agent"
             }
         ]
-        
+
         # Simple string-matching keyword filtering
         kw_lower = keywords.lower()
         filtered = [
@@ -130,6 +131,6 @@ class JobScraper:
             for item in mock_database
             if any(term in item["title"].lower() or term in item["description"].lower() for term in kw_lower.split())
         ]
-        
+
         # If search matches nothing, return everything as default fallback
         return filtered if filtered else [Job(**item) for item in mock_database]

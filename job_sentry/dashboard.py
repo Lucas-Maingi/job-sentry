@@ -8,9 +8,10 @@ search scrapes, edit cover letters, run Playwright automations, and check emails
 from __future__ import annotations
 
 import sqlite3
+
+import httpx
 import pandas as pd
 import streamlit as st
-import httpx
 
 from job_sentry.config import settings
 from job_sentry.models import JobStatus
@@ -86,7 +87,7 @@ search_keywords = st.sidebar.text_input("Keywords", "AI Application Engineer")
 search_location = st.sidebar.text_input("Location", "Remote")
 if st.sidebar.button("Run Scraper Scans", use_container_width=True):
     trigger_search(search_keywords, search_location)
-    
+
 st.sidebar.markdown("---")
 st.sidebar.header("Inbox Sync")
 if st.sidebar.button("Refresh Recruiter Emails", use_container_width=True):
@@ -107,7 +108,7 @@ if not jobs_df.empty:
     total_drafting = len(jobs_df[jobs_df["status"] == JobStatus.DRAFTING.value])
     total_applied = len(jobs_df[jobs_df["status"] == JobStatus.APPLIED.value])
     total_interviews = len(jobs_df[jobs_df["status"] == JobStatus.INTERVIEWING.value])
-    
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Jobs Discovered", total_discovered)
@@ -141,19 +142,19 @@ for col_name, status_val in columns.items():
     with st_cols[col_idx]:
         st.markdown(f"#### {col_name}")
         st.markdown("---")
-        
+
         # Filter jobs in this column
         sub_df = jobs_df[jobs_df["status"] == status_val]
-        
+
         if not sub_df.empty:
             for _, row in sub_df.iterrows():
                 job_id = row["job_id"]
                 score = row["match_score"]
-                
+
                 # Card Container
                 # Color score badge dynamically
                 badge_color = "green" if score >= 75 else "orange" if score >= 60 else "gray"
-                
+
                 with st.container(border=True):
                     st.markdown(
                         f"**{row['title']}**<br>"
@@ -161,21 +162,21 @@ for col_name, status_val in columns.items():
                         f"<span style='color:{badge_color}; font-weight:bold;'>Match: {score:.0f}%</span>",
                         unsafe_allow_html=True
                     )
-                    
+
                     # Expand details button
                     exp_key = f"details_{job_id}"
                     details_exp = st.expander("Expand Details")
                     with details_exp:
                         st.markdown("**Match Reasoning**")
                         st.write(row["match_reasoning"])
-                        
+
                         st.markdown("**Application URL**")
                         st.write(row["url"])
-                        
+
                         if status_val == JobStatus.DRAFTING.value:
                             st.markdown("**Drafted Cover Letter**")
                             st.text_area("Cover Letter", value=row["cover_letter"], height=150, key=f"cl_{job_id}")
-                            
+
                             if st.button("Trigger Playwright Apply", key=f"apply_btn_{job_id}", use_container_width=True):
                                 trigger_apply(job_id)
         else:

@@ -2,9 +2,10 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from job_sentry.app import app, get_store, execute_job_search_and_triage
-from job_sentry.store import JobStore
+
+from job_sentry.app import app, execute_job_search_and_triage, get_store
 from job_sentry.models import Job, JobStatus
+from job_sentry.store import JobStore
 
 
 @pytest.fixture
@@ -42,12 +43,12 @@ def test_trigger_search_endpoint(client):
 async def test_execute_job_search_and_triage_worker(store):
     # Run the worker to query and score jobs (with mock fallback listings)
     await execute_job_search_and_triage("WhatsApp", "Nairobi", store)
-    
+
     # Verify mock mobilempesa role was found and scored
     jobs = store.get_all_jobs()
     assert len(jobs) >= 1
     mobile_job = [j for j in jobs if "MobileM-Pesa" in j.company][0]
-    
+
     # MobileM-Pesa system title matches "FastAPI" and "WhatsApp" and "Agent"
     # Base 30 + fastapi 15 + agent 15 = 60.0 score -> should be DRAFTING
     assert mobile_job.match_score >= 60.0
@@ -64,11 +65,11 @@ def test_apply_triggers_playwright_scaffold(client, store):
         url="https://example.com/apply"
     )
     store.save_job(job)
-    
+
     resp = client.post(f"/jobs/{job.job_id}/apply")
     assert resp.status_code == 200
     assert resp.json()["new_status"] == "applied"
-    
+
     updated = store.get_job(job.job_id)
     assert updated.status == JobStatus.APPLIED
 
@@ -83,13 +84,13 @@ def test_refresh_emails_endpoint(client, store):
         status=JobStatus.DISCOVERED
     )
     store.save_job(job)
-    
+
     # Trigger IMAP scan endpoint
     resp = client.post("/emails/refresh")
     assert resp.status_code == 200
     assert resp.json()["status"] == "success"
     assert resp.json()["updates_found"] == 1
-    
+
     # Verify state transitioned
     updated = store.get_job(job.job_id)
     assert updated.status == JobStatus.INTERVIEWING

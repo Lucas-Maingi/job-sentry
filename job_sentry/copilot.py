@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
-import httpx
 from typing import Any
+
+import httpx
+
 from job_sentry.config import settings
 from job_sentry.models import Job
 
@@ -45,14 +47,11 @@ class JobCopilot:
 
     def evaluate_and_draft(self, job: Job) -> Job:
         """Run match evaluation and write application drafts for a job."""
-        if self.mock_mode:
-            analysis = self._evaluate_fallback(job)
-        else:
-            analysis = self._evaluate_llm(job)
+        analysis = self._evaluate_fallback(job) if self.mock_mode else self._evaluate_llm(job)
 
         job.match_score = analysis.get("match_score", 0.0)
         job.match_reasoning = analysis.get("match_reasoning", "Evaluation completed.")
-        
+
         # If it's a high match (>= 60%), save the auto-drafted cover letter and questions
         if job.match_score >= 60.0:
             job.cover_letter = analysis.get("cover_letter")
@@ -74,7 +73,7 @@ class JobCopilot:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        
+
         payload = {
             "model": settings.llm_model,
             "response_format": {"type": "json_object"},
@@ -88,7 +87,7 @@ class JobCopilot:
         try:
             with httpx.Client() as client:
                 resp = client.post(url, json=payload, headers=headers, timeout=20.0)
-            
+
             if resp.status_code == 200:
                 result = resp.json()
                 content_str = result["choices"][0]["message"]["content"]
@@ -104,16 +103,16 @@ class JobCopilot:
         """Local keyword intersections for scoring and template-based covers."""
         title_lower = job.title.lower()
         desc_lower = job.description.lower()
-        
+
         # Base resume keywords we check intersection for
         keywords = {
             "python": 15, "fastapi": 15, "next.js": 15, "postgres": 10,
             "docker": 10, "rag": 15, "agent": 15, "langgraph": 15, "playwright": 10
         }
-        
+
         score = 30.0 # baseline score
         reasons = []
-        
+
         # Calculate intersection
         for kw, points in keywords.items():
             if kw in title_lower or kw in desc_lower:
@@ -121,7 +120,7 @@ class JobCopilot:
                 reasons.append(kw.upper())
 
         score = min(score, 100.0)
-        
+
         # Generate clean template cover letter
         cover_letter = (
             f"Dear Hiring Team at {job.company},\n\n"
@@ -133,12 +132,12 @@ class JobCopilot:
             f"these core competencies in {', '.join(reasons) if reasons else 'AI Engineering'} to your team.\n\n"
             f"Sincerely,\nLucas Maingi"
         )
-        
+
         why_role = (
             f"I am drawn to {job.company}'s work on {job.title}. My expertise in FastAPI "
             f"and RAG structures aligns directly with the technical requirements of this team."
         )
-        
+
         experience_llm = (
             "I have built production-ready agentic orchestration loops using LangGraph, "
             "implementing semantic prompt caches, guardrail gateway scanning intercepts, "
@@ -146,7 +145,7 @@ class JobCopilot:
         )
 
         reasoning = (
-            f"Matches resume skills on {', '.join(reasons)}" if reasons 
+            f"Matches resume skills on {', '.join(reasons)}" if reasons
             else "General software alignment; low direct AI skill intersections found."
         )
 

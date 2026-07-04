@@ -19,7 +19,7 @@ def test_form_filler_mock_execution():
     )
     job.cover_letter = "Hi, I am Lucas."
     job.custom_answers = {"Why work here?": "Because you are innovative."}
-    
+
     success = filler.auto_fill_application(job, resume_path="Lucas_Resume.pdf")
-    
+
     assert success is True

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
+
 from job_sentry.config import settings
 from job_sentry.models import Job, JobStatus
 

@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  copilot:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - data-volume:/app
+    environment:
+      - JOBSENTRY_DB_PATH=/app/job_sentry.db
+      - JOBSENTRY_LLM_API_KEY=""
+      - JOBSENTRY_SERPER_API_KEY=""
+
+  console:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - data-volume:/app
+    environment:
+      - JOBSENTRY_DB_PATH=/app/job_sentry.db
+      - JOBSENTRY_AGENT_BRAIN_URL=http://copilot:8000
+    command: ["streamlit", "run", "job_sentry/dashboard.py", "--server.address=0.0.0.0"]
+    depends_on:
+      - copilot
+
+volumes:
+  data-volume:

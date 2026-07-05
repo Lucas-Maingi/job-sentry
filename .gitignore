@@ -19,3 +19,5 @@ env/
 htmlcov/
 .coverage
 *.log
+artifacts/
+uploads/

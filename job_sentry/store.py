@@ -73,6 +73,11 @@ class JobStore:
             )
         """)
 
+        # Additive column migrations for databases created by older versions.
+        self._add_column_if_missing("users", "resume_path", "TEXT DEFAULT ''")
+        self._add_column_if_missing("jobs", "apply_log", "TEXT DEFAULT ''")
+        self._add_column_if_missing("jobs", "screenshot_path", "TEXT")
+
         # Copy legacy rows across once, then drop the old table.
         cursor = self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='jobs_legacy'"
@@ -93,19 +98,25 @@ class JobStore:
 
         self._conn.commit()
 
+    def _add_column_if_missing(self, table: str, column: str, decl: str) -> None:
+        cols = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
     # ── User Profiles ────────────────────────────────────────────────────
 
     def save_user(self, user: UserProfile) -> None:
         self._conn.execute(
             """
             INSERT OR REPLACE INTO users (
-                user_id, name, email, phone, resume_text,
+                user_id, name, email, phone, resume_text, resume_path,
                 default_keywords, default_location, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user.user_id, user.name, user.email, user.phone, user.resume_text,
-                user.default_keywords, user.default_location, user.created_at.isoformat()
+                user.resume_path, user.default_keywords, user.default_location,
+                user.created_at.isoformat()
             )
         )
         self._conn.commit()
@@ -131,6 +142,7 @@ class JobStore:
             email=row["email"],
             phone=row["phone"] or "",
             resume_text=row["resume_text"] or "",
+            resume_path=row["resume_path"] or "",
             default_keywords=row["default_keywords"] or "",
             default_location=row["default_location"] or "",
             created_at=datetime.fromisoformat(row["created_at"])
@@ -148,8 +160,9 @@ class JobStore:
             INSERT OR REPLACE INTO jobs (
                 job_id, user_id, title, company, location, description, url,
                 salary, source, match_score, match_reasoning, status, cover_letter,
-                custom_answers_json, discovered_at, applied_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                custom_answers_json, apply_log, screenshot_path,
+                discovered_at, applied_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -166,6 +179,8 @@ class JobStore:
                 job.status.value,
                 job.cover_letter,
                 json.dumps(job.custom_answers),
+                job.apply_log,
+                job.screenshot_path,
                 job.discovered_at.isoformat(),
                 job.applied_at.isoformat() if job.applied_at else None,
                 job.updated_at.isoformat()
@@ -257,6 +272,8 @@ class JobStore:
             status=JobStatus(row["status"]),
             cover_letter=row["cover_letter"],
             custom_answers=json.loads(row["custom_answers_json"] or "{}"),
+            apply_log=row["apply_log"] or "",
+            screenshot_path=row["screenshot_path"],
             discovered_at=datetime.fromisoformat(row["discovered_at"]),
             applied_at=datetime.fromisoformat(row["applied_at"]) if row["applied_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"])

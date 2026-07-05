@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     # ── Discord Webhook Integration ──────────────────────────────────────
     discord_webhook_url: str = ""
 
+    # ── Browser Automation (Playwright) ──────────────────────────────────
+    browser_mock: bool = False       # True = simulate form fills (CI / no browser installed)
+    browser_headless: bool = True
+    browser_auto_submit: bool = False  # True = click Submit after filling (HITL default: fill only)
+    artifacts_dir: str = "artifacts"   # proof screenshots of filled applications
+    uploads_dir: str = "uploads"       # candidate resume files
+
+    # ── Autonomous Background Scanner ────────────────────────────────────
+    # Every N minutes, re-run search + AI triage for all registered users
+    # and poll recruiter emails. 0 disables the loop.
+    auto_scan_interval_minutes: int = 360
+
     # ── Server ──────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000

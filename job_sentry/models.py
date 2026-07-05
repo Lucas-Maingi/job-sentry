@@ -29,6 +29,7 @@ class UserProfile(BaseModel):
     email: str
     phone: str = ""
     resume_text: str = ""
+    resume_path: str = ""  # uploaded resume file used for form uploads
     default_keywords: str = "AI Application Engineer Remote"
     default_location: str = "Remote"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -67,6 +68,10 @@ class Job(BaseModel):
     cover_letter: str | None = None
     custom_answers: dict[str, str] = Field(default_factory=dict)
 
+    # Browser automation evidence
+    apply_log: str = ""              # human-readable trace of the last form-fill run
+    screenshot_path: str | None = None  # proof screenshot of the filled application
+
     # Audit log timestamps
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     applied_at: datetime | None = None
@@ -97,3 +102,20 @@ class StatusUpdate(BaseModel):
 class CoverLetterUpdate(BaseModel):
     """Payload for saving an operator-edited cover letter draft."""
     cover_letter: str
+
+
+class ApplyRequest(BaseModel):
+    """Options for a browser form-fill run."""
+    auto_submit: bool | None = None  # None -> fall back to the configured default
+
+
+class ApplyReport(BaseModel):
+    """Outcome of a browser form-fill run."""
+    job_id: str
+    success: bool
+    submitted: bool
+    filled_fields: list[str] = Field(default_factory=list)
+    log: str = ""
+    screenshot_path: str | None = None
+    new_status: str = ""
+    message: str = ""

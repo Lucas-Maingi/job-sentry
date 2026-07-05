@@ -20,16 +20,43 @@ class JobStatus(str, Enum):
     ARCHIVED = "archived"         # Dismissed by operator
 
 
+# ── User Profiles ─────────────────────────────────────────────────────────
+
+class UserProfile(BaseModel):
+    """A candidate account: resume, contact details, and default search filters."""
+    user_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    name: str
+    email: str
+    phone: str = ""
+    resume_text: str = ""
+    default_keywords: str = "AI Application Engineer Remote"
+    default_location: str = "Remote"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UserProfileCreate(BaseModel):
+    """Payload for registering a new candidate profile."""
+    name: str
+    email: str
+    phone: str = ""
+    resume_text: str = ""
+    default_keywords: str = "AI Application Engineer Remote"
+    default_location: str = "Remote"
+
+
 # ── Job Application Data ──────────────────────────────────────────────────
 
 class Job(BaseModel):
     """Represents a job opportunity and its state inside the pipeline."""
     job_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    user_id: str = ""
     title: str
     company: str
     location: str = "Remote"
     description: str
     url: str
+    salary: str | None = None
+    source: str = "serper"
 
     # AI Triage & Parsing
     match_score: float = 0.0
@@ -46,7 +73,27 @@ class Job(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class StatusEvent(BaseModel):
+    """One entry in a job's stage-transition audit trail."""
+    event_id: int | None = None
+    job_id: str
+    status: JobStatus
+    note: str = ""
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class JobSearchQuery(BaseModel):
     """Parameters to trigger a job search scrape."""
-    keywords: str = "AI Application Engineer Remote"
-    location_filter: str = "United States"
+    keywords: str = ""
+    location_filter: str = ""
+
+
+class StatusUpdate(BaseModel):
+    """Payload for manually moving a job to a new pipeline stage."""
+    status: JobStatus
+    note: str = ""
+
+
+class CoverLetterUpdate(BaseModel):
+    """Payload for saving an operator-edited cover letter draft."""
+    cover_letter: str

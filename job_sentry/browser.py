@@ -8,17 +8,20 @@ import time
 
 from playwright.sync_api import Page, sync_playwright
 
-from job_sentry.models import Job
+from job_sentry.models import Job, UserProfile
 
 logging.basicConfig(level=logging.INFO)
+
+_FALLBACK_PROFILE = UserProfile(name="JobSentry Candidate", email="candidate@example.com")
 
 
 class FormFiller:
     """Automates browser navigation and form submittals for job applications."""
 
-    def __init__(self, headless: bool = True, mock_mode: bool = True):
+    def __init__(self, headless: bool = True, mock_mode: bool = True, profile: UserProfile | None = None):
         self.headless = headless
         self.mock_mode = mock_mode
+        self.profile = profile or _FALLBACK_PROFILE
         if self.mock_mode:
             logging.info("JobSentry FormFiller initialized in MOCK mode (no browser GUI allocated).")
 
@@ -43,11 +46,15 @@ class FormFiller:
                 page.goto(job.url, timeout=30000)
                 page.wait_for_load_state("networkidle")
 
-                # 1. Fill standard fields
-                self._fill_input_if_exists(page, ["first name", "firstname", "first_name"], "Lucas")
-                self._fill_input_if_exists(page, ["last name", "lastname", "last_name"], "Maingi")
-                self._fill_input_if_exists(page, ["email", "e-mail"], "maingilucas0@gmail.com")
-                self._fill_input_if_exists(page, ["phone", "tel", "mobile"], "+254712345678")
+                # 1. Fill standard fields from the candidate's profile
+                name_parts = self.profile.name.split()
+                first_name = name_parts[0] if name_parts else ""
+                last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+                self._fill_input_if_exists(page, ["first name", "firstname", "first_name"], first_name)
+                self._fill_input_if_exists(page, ["last name", "lastname", "last_name"], last_name)
+                self._fill_input_if_exists(page, ["email", "e-mail"], self.profile.email)
+                if self.profile.phone:
+                    self._fill_input_if_exists(page, ["phone", "tel", "mobile"], self.profile.phone)
 
                 # 2. Upload resume if path supplied
                 if resume_path and os.path.exists(resume_path):
@@ -115,8 +122,8 @@ class FormFiller:
         logging.info(f"[MOCK FORM FILLER] Accessing job URL: {job.url}")
         time.sleep(0.5)
 
-        logging.info("[MOCK FORM FILLER] Autofilled Name: Lucas Maingi")
-        logging.info("[MOCK FORM FILLER] Autofilled Email: maingilucas0@gmail.com")
+        logging.info(f"[MOCK FORM FILLER] Autofilled Name: {self.profile.name}")
+        logging.info(f"[MOCK FORM FILLER] Autofilled Email: {self.profile.email}")
 
         if resume_path:
             logging.info(f"[MOCK FORM FILLER] Uploaded resume from path: {resume_path}")

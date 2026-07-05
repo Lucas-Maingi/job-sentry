@@ -4,9 +4,9 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-JobSentry is a semi-autonomous AI Job Application Copilot designed to automate the job search, triage, cover letter drafting, form-filling, and recruiter response tracking.
+JobSentry is a **multi-user**, semi-autonomous AI Job Application Copilot that automates job search, AI triage, cover letter drafting, form-filling, and pipeline tracking.
 
-It leverages Google Search / Serper APIs to scan for open positions, matches listings against the user's resume, drafts custom cover letters, autofills applications via Playwright, and checks IMAP emails for recruiter replies.
+Each candidate registers a profile (resume + search defaults). JobSentry scans Google via the Serper API for open positions, scores every listing against that candidate's resume with an LLM (Groq / any OpenAI-compatible endpoint), extracts salary and company details, drafts custom cover letters, autofills applications via Playwright, and tracks every application through a stage-history timeline — Discovered → Drafting → Applied → Interviewing → Offer.
 
 ---
 
@@ -18,28 +18,32 @@ It leverages Google Search / Serper APIs to scan for open positions, matches lis
   | (Google / Serper)|                   |   (FastAPI API)    |
   +--------+---------+                   +---------+----------+
            |                                       |
-           | 1. Scrapes listings                   |
+           | 1. Scrapes listings (per user)        |
            +-------------------------------------->+
-           |                                       | 2. Scrape match & draft letters (LLM)
+           |                                       | 2. LLM match score + salary/company
+           |                                       |    extraction + cover drafting (Groq)
            |                                       v
            |                               +-------+--------+
-           |                               |  Kanban Board  |
+           |                               | Multi-User     |
+           |                               | Console        |
+           |                               | (Streamlit)    |
            |                               +-------+--------+
            |                                       |
-           |                                       | 3. Operator clicks Apply
+           |                                       | 3. Operator reviews draft, clicks Apply
            |                                       v
-           | 4. Auto-Fill application (Playwright) |
+           | 4. Auto-Fill application (Playwright, |
+           |    candidate's own profile details)   |
            +<--------------------------------------+
            |
            | 5. Poll Recruiter replies (IMAP email checks)
-           +--------------------------------------> (Mark Interview/Refused)
+           +--------------------------------------> (Stage history timeline updated)
 ```
 
 ### Safety Protocol Layers:
-1.  **Job Scrape & Score**: Jobs are discovered and evaluated (0-100 score). Matches scoring $<60\%$ are flagged as low priority.
-2.  **Drafting Phase**: Matches scoring $\ge 60\%$ are prepared in the `DRAFTING` column, automatically drafting Cover Letters and answering custom application questions.
-3.  **Human-in-the-Loop Apply**: Playwright form submittal triggers upon user review of drafts. Operators click "Trigger Playwright Apply" to launch the browser session.
-4.  **IMAP Response Monitor**: Continuous checks for incoming recruiter emails, auto-advancing statuses to `INTERVIEWING`, `REJECTED`, or `OFFER` columns.
+1.  **Job Scrape & Score**: Jobs are discovered and evaluated (0-100 score) against the owning candidate's resume. Matches scoring $<60\%$ are flagged as low priority.
+2.  **Drafting Phase**: Matches scoring $\ge 60\%$ are prepared in the `DRAFTING` column, automatically drafting cover letters (signed with the candidate's name) and answering custom application questions.
+3.  **Human-in-the-Loop Apply**: Playwright form submittal triggers only after the candidate reviews drafts and clicks Apply.
+4.  **IMAP Response Monitor**: Checks for incoming recruiter emails, auto-advancing statuses to `INTERVIEWING`, `REJECTED`, or `OFFER` — every transition is recorded in the job's stage-history audit trail.
 
 ---
 
@@ -49,48 +53,58 @@ It leverages Google Search / Serper APIs to scan for open positions, matches lis
 - Python 3.10+
 - Installed packages: `pip install -e ".[dashboard,dev]"`
 - Playwright browsers: `playwright install chromium`
+- Copy `.env.example` to `.env` and add your Serper + LLM keys (Groq works out of the box)
 
-### 1. Launch SentryJob Central API (Port 8000):
+### 1. Launch the JobSentry Central API (Port 8000):
 ```bash
 python -m uvicorn job_sentry.app:app --host 127.0.0.1 --port 8000
 ```
 
-### 2. Launch the Streamlit Kanban Board Console (Port 8501):
+### 2. Launch the Streamlit Console (Port 8501):
 ```bash
 streamlit run job_sentry/dashboard.py
 ```
+Register a profile in the sidebar, hit **Scan for new jobs**, and manage your pipeline across four views: **Pipeline Board** (kanban), **Applications Tracker** (company / role / stage / salary / dates table), **Job Details** (full description, AI reasoning, drafted materials, stage timeline), and **My Profile**.
 
 ### 3. Deploy via Docker Compose:
 ```bash
 docker-compose up --build
 ```
-This boots both the API (`copilot`) and the Streamlit Kanban dashboard console (`console`) connected on a shared database volume.
+This boots both the API (`copilot`) and the Streamlit console (`console`) connected on a shared database volume.
 
 ---
 
 ## 🔌 API Documentation
 
-### 1. Trigger Search Scan:
-`POST /search`
+Interactive docs at `http://127.0.0.1:8000/docs`.
+
+### Users
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/users` | Register a candidate profile (name, email, resume, search defaults) |
+| `GET` | `/users` | List all profiles |
+| `PUT` | `/users/{user_id}` | Update a profile |
+
+### Pipeline
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/users/{user_id}/search` | Queue a scrape + AI triage for one candidate |
+| `GET` | `/users/{user_id}/jobs` | That candidate's pipeline (optional `?status=` filter) |
+| `GET` | `/jobs/{job_id}` | Full job detail |
+| `GET` | `/jobs/{job_id}/history` | Stage-transition audit trail |
+| `POST` | `/jobs/{job_id}/status` | Manual stage move |
+| `PUT` | `/jobs/{job_id}/cover_letter` | Save an edited cover letter draft |
+| `POST` | `/jobs/{job_id}/apply` | Trigger Playwright form submission |
+| `POST` | `/emails/refresh` | Sync recruiter email replies |
+
+Example — register and search:
 ```bash
-curl -X POST http://127.0.0.1:8000/search \
+curl -X POST http://127.0.0.1:8000/users \
   -H "Content-Type: application/json" \
-  -d '{
-    "keywords": "AI Application Engineer",
-    "location_filter": "Remote"
-  }'
-```
+  -d '{"name": "Jane Doe", "email": "jane@example.com", "resume_text": "Python engineer...", "default_keywords": "Backend Engineer", "default_location": "Remote"}'
 
-### 2. Trigger Playwright Submission:
-`POST /jobs/{job_id}/apply`
-```bash
-curl -X POST http://127.0.0.1:8000/jobs/83cf92b1/apply
-```
-
-### 3. Sync Email Statuses:
-`POST /emails/refresh`
-```bash
-curl -X POST http://127.0.0.1:8000/emails/refresh
+curl -X POST http://127.0.0.1:8000/users/<user_id>/search \
+  -H "Content-Type: application/json" -d '{}'
 ```
 
 ---
@@ -98,7 +112,7 @@ curl -X POST http://127.0.0.1:8000/emails/refresh
 ## 🧪 Testing
 
 ```bash
-# Run the full test suite (14 passing tests)
+# Run the full test suite (23 passing tests)
 pytest tests/ -v
 ```
 

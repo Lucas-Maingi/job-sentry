@@ -42,8 +42,9 @@ Each candidate registers a profile (resume + search defaults). JobSentry scans G
 ### Safety Protocol Layers:
 1.  **Job Scrape & Score**: Jobs are discovered and evaluated (0-100 score) against the owning candidate's resume. Matches scoring $<60\%$ are flagged as low priority.
 2.  **Drafting Phase**: Matches scoring $\ge 60\%$ are prepared in the `DRAFTING` column, automatically drafting cover letters (signed with the candidate's name) and answering custom application questions.
-3.  **Human-in-the-Loop Apply**: Playwright form submittal triggers only after the candidate reviews drafts and clicks Apply.
-4.  **IMAP Response Monitor**: Checks for incoming recruiter emails, auto-advancing statuses to `INTERVIEWING`, `REJECTED`, or `OFFER` — every transition is recorded in the job's stage-history audit trail.
+3.  **Human-in-the-Loop Apply**: Playwright opens the real posting, fills every recognisable field (name, contacts, cover letter, custom answers), uploads the candidate's resume file, and captures a proof screenshot. Clicking Submit is gated behind an explicit auto-submit flag — by default the candidate reviews the screenshot and confirms.
+4.  **Autonomous Scanner**: A background loop re-scans and triages jobs for every registered profile on a configurable interval (default: every 6 hours).
+5.  **IMAP Response Monitor**: Checks for incoming recruiter emails, auto-advancing statuses to `INTERVIEWING`, `REJECTED`, or `OFFER` — every transition is recorded in the job's stage-history audit trail.
 
 ---
 
@@ -54,6 +55,7 @@ Each candidate registers a profile (resume + search defaults). JobSentry scans G
 - Installed packages: `pip install -e ".[dashboard,dev]"`
 - Playwright browsers: `playwright install chromium`
 - Copy `.env.example` to `.env` and add your Serper + LLM keys (Groq works out of the box)
+- Set `JOBSENTRY_BROWSER_MOCK=1` to simulate form fills on machines without Playwright browsers
 
 ### 1. Launch the JobSentry Central API (Port 8000):
 ```bash
@@ -84,6 +86,7 @@ Interactive docs at `http://127.0.0.1:8000/docs`.
 | `POST` | `/users` | Register a candidate profile (name, email, resume, search defaults) |
 | `GET` | `/users` | List all profiles |
 | `PUT` | `/users/{user_id}` | Update a profile |
+| `POST` | `/users/{user_id}/resume` | Upload the resume file used in real form fills |
 
 ### Pipeline
 | Method | Path | Purpose |
@@ -94,7 +97,7 @@ Interactive docs at `http://127.0.0.1:8000/docs`.
 | `GET` | `/jobs/{job_id}/history` | Stage-transition audit trail |
 | `POST` | `/jobs/{job_id}/status` | Manual stage move |
 | `PUT` | `/jobs/{job_id}/cover_letter` | Save an edited cover letter draft |
-| `POST` | `/jobs/{job_id}/apply` | Trigger Playwright form submission |
+| `POST` | `/jobs/{job_id}/apply` | Real Playwright form fill (`{"auto_submit": true}` to also click Submit) |
 | `POST` | `/emails/refresh` | Sync recruiter email replies |
 
 Example — register and search:
@@ -112,7 +115,7 @@ curl -X POST http://127.0.0.1:8000/users/<user_id>/search \
 ## 🧪 Testing
 
 ```bash
-# Run the full test suite (23 passing tests)
+# Run the full test suite (26 passing tests)
 pytest tests/ -v
 ```
 

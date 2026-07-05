@@ -107,24 +107,67 @@ async def test_execute_job_search_and_triage_worker(store, user):
     assert mobile_job.user_id == user.user_id
 
 
-def test_apply_triggers_playwright_scaffold(client, store, user):
-    # Seed a job listing
+def test_apply_fill_only_keeps_stage_and_stores_evidence(client, store, user):
+    # Default HITL mode: form is filled, but not submitted — stage unchanged
     job = Job(
         user_id=user.user_id,
         title="AI Engineer",
         company="TechCorp",
         description="We need python developers.",
-        url="https://example.com/apply"
+        url="https://example.com/apply",
+        status=JobStatus.DRAFTING,
     )
     store.save_job(job)
 
-    resp = client.post(f"/jobs/{job.job_id}/apply")
+    resp = client.post(f"/jobs/{job.job_id}/apply", json={})
     assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["submitted"] is False
+    assert body["new_status"] == "drafting"
+
+    updated = store.get_job(job.job_id)
+    assert updated.status == JobStatus.DRAFTING
+    assert updated.apply_log  # evidence trail persisted
+
+
+def test_apply_with_auto_submit_marks_applied(client, store, user):
+    job = Job(
+        user_id=user.user_id,
+        title="AI Engineer",
+        company="TechCorp",
+        description="We need python developers.",
+        url="https://example.com/apply-direct"
+    )
+    store.save_job(job)
+
+    resp = client.post(f"/jobs/{job.job_id}/apply", json={"auto_submit": True})
+    assert resp.status_code == 200
+    assert resp.json()["submitted"] is True
     assert resp.json()["new_status"] == "applied"
 
     updated = store.get_job(job.job_id)
     assert updated.status == JobStatus.APPLIED
     assert updated.applied_at is not None
+
+
+def test_resume_upload(client, store, user):
+    resp = client.post(
+        f"/users/{user.user_id}/resume",
+        files={"file": ("My_Resume.pdf", b"%PDF-1.4 fake resume bytes", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["resume_path"].endswith(".pdf")
+
+    refreshed = store.get_user(user.user_id)
+    assert refreshed.resume_path
+
+    # Non-document extensions are rejected
+    bad = client.post(
+        f"/users/{user.user_id}/resume",
+        files={"file": ("malware.exe", b"MZ", "application/octet-stream")},
+    )
+    assert bad.status_code == 400
 
 
 def test_manual_status_update_and_history(client, store, user):

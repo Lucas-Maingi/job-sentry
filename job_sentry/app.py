@@ -6,11 +6,15 @@ checking statuses, and managing applications in each user's job pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
 
 from job_sentry import __version__
 from job_sentry.browser import FormFiller
@@ -18,6 +22,8 @@ from job_sentry.config import settings
 from job_sentry.copilot import JobCopilot
 from job_sentry.emails import EmailMonitor
 from job_sentry.models import (
+    ApplyReport,
+    ApplyRequest,
     CoverLetterUpdate,
     Job,
     JobSearchQuery,
@@ -33,6 +39,7 @@ from job_sentry.store import JobStore
 # ── Lifespan & Dependency Management ─────────────────────────────────────
 
 _store: JobStore | None = None
+_scan_task: asyncio.Task | None = None
 
 
 def get_store() -> JobStore:
@@ -40,11 +47,38 @@ def get_store() -> JobStore:
     return _store
 
 
+async def autonomous_scan_loop() -> None:
+    """Periodically re-scan and triage jobs for every registered user."""
+    interval = settings.auto_scan_interval_minutes * 60
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            store = get_store()
+            users = store.get_all_users()
+            logging.info(f"[AUTO-SCAN] Running scheduled scan for {len(users)} user(s).")
+            for user in users:
+                await execute_job_search_and_triage(
+                    user, user.default_keywords, user.default_location, store
+                )
+            EmailMonitor(store).check_updates()
+        except Exception as e:
+            logging.error(f"[AUTO-SCAN] Scheduled scan error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _store
+    global _store, _scan_task
     _store = JobStore()
+    Path(settings.artifacts_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.uploads_dir).mkdir(parents=True, exist_ok=True)
+    if settings.auto_scan_interval_minutes > 0:
+        _scan_task = asyncio.create_task(autonomous_scan_loop())
+        logging.info(
+            f"Autonomous scanner armed: every {settings.auto_scan_interval_minutes} minutes."
+        )
     yield
+    if _scan_task:
+        _scan_task.cancel()
 
 
 # ── App Definition ───────────────────────────────────────────────────────
@@ -55,6 +89,10 @@ app = FastAPI(
     description="JobSentry AI Job Application Copilot API",
     lifespan=lifespan,
 )
+
+# Serve proof screenshots captured by the form filler
+Path(settings.artifacts_dir).mkdir(parents=True, exist_ok=True)
+app.mount("/artifacts", StaticFiles(directory=settings.artifacts_dir), name="artifacts")
 
 
 # ── Background Workers ───────────────────────────────────────────────────
@@ -217,31 +255,75 @@ async def update_cover_letter(job_id: str, payload: CoverLetterUpdate, store: Jo
     return job
 
 
-@app.post("/jobs/{job_id}/apply", tags=["pipeline"])
-async def apply_to_job(job_id: str, store: JobStore = Depends(get_store)):
-    """Triggers Playwright browser automation task to auto-submit applications."""
+@app.post("/jobs/{job_id}/apply", response_model=ApplyReport, tags=["pipeline"])
+def apply_to_job(job_id: str, payload: ApplyRequest | None = None, store: JobStore = Depends(get_store)):
+    """Runs Playwright browser automation to fill (and optionally submit) the application.
+
+    Declared sync on purpose: FastAPI executes it in a worker thread, which the
+    synchronous Playwright API requires. With auto_submit off (the default) the
+    form is filled and screenshotted for human review; the candidate confirms
+    submission from the dashboard.
+    """
     job = store.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
     profile = store.get_user(job.user_id) if job.user_id else None
+    auto_submit = payload.auto_submit if payload else None
 
-    # Launch browser automation with the owning candidate's details
-    filler = FormFiller(profile=profile)
-    success = filler.auto_fill_application(job, resume_path=None)
+    filler = FormFiller(profile=profile, auto_submit=auto_submit)
+    result = filler.fill_application(job)
 
-    if success:
+    # Persist evidence regardless of outcome
+    job.apply_log = result.text_log
+    if result.screenshot_path:
+        job.screenshot_path = result.screenshot_path
+
+    if result.submitted:
         job.status = JobStatus.APPLIED
         job.applied_at = datetime.now(timezone.utc)
-        store.save_job(job)
-        return {
-            "status": "success",
-            "job_id": job.job_id,
-            "new_status": job.status.value,
-            "message": "Playwright completed form submittal successfully."
-        }
+        message = "Form filled and submitted. Post-submit screenshot captured."
+    elif result.success:
+        message = "Form filled and screenshotted — review the proof, then confirm submission."
     else:
-        raise HTTPException(status_code=500, detail="Playwright form filling session failed.")
+        message = "Could not fill an application form on this page. See the run log."
+    store.save_job(job)
+
+    if not result.success:
+        raise HTTPException(status_code=422, detail={"message": message, "log": result.text_log})
+
+    return ApplyReport(
+        job_id=job.job_id,
+        success=result.success,
+        submitted=result.submitted,
+        filled_fields=result.filled_fields,
+        log=result.text_log,
+        screenshot_path=result.screenshot_path,
+        new_status=job.status.value,
+        message=message,
+    )
+
+
+@app.post("/users/{user_id}/resume", response_model=UserProfile, tags=["users"])
+async def upload_resume(user_id: str, file: UploadFile = File(...), store: JobStore = Depends(get_store)):
+    """Store the candidate's resume file for real form uploads."""
+    user = store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    suffix = Path(file.filename or "resume.pdf").suffix.lower()
+    if suffix not in (".pdf", ".doc", ".docx", ".txt"):
+        raise HTTPException(status_code=400, detail="Resume must be a PDF, DOC, DOCX, or TXT file.")
+
+    uploads = Path(settings.uploads_dir)
+    uploads.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{user_id}_{Path(file.filename or 'resume').name}")
+    dest = uploads / safe_name
+    dest.write_bytes(await file.read())
+
+    user.resume_path = str(dest)
+    store.save_user(user)
+    return user
 
 
 @app.post("/emails/refresh", tags=["copilot"])

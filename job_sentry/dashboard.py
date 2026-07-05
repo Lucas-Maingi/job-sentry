@@ -34,9 +34,34 @@ st.set_page_config(
 
 _CSS = """
 <style>
-    /* Tighten Streamlit's default page chrome so everything fits one viewport */
-    .block-container { padding-top: 1.1rem; padding-bottom: 0.8rem; }
-    header[data-testid="stHeader"] { height: 0; }
+    /* Remove Streamlit chrome entirely: no toolbar overlay, no clipped hero,
+       and the app owns the full viewport like a real product. */
+    #MainMenu, footer,
+    header[data-testid="stHeader"],
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    .stAppDeployButton { display: none !important; }
+    .block-container { padding-top: 0.9rem; padding-bottom: 0.4rem; max-width: 100%; }
+
+    /* Responsive fixed-height panes: Python sets a fallback px height, then an
+       invisible .js-pane-* marker inside each pane lets us retarget the exact
+       container and stretch it to the viewport edge — no wasted space, no page
+       scroll, on any screen size. Streamlit sizes these via `flex: 0 0 <h>px`,
+       so flex-basis (not height) is the property that must be overridden. */
+    .js-pane-board, .js-pane-detail { display: none; }
+    div[data-testid="stLayoutWrapper"]:has(> div[data-testid="stVerticalBlock"] > div[data-testid="stElementContainer"] .js-pane-board) {
+        flex-basis: calc(100vh - 278px) !important;
+        height: calc(100vh - 278px) !important;
+        min-height: 300px;
+    }
+    div[data-testid="stLayoutWrapper"]:has(> div[data-testid="stVerticalBlock"] > div[data-testid="stElementContainer"] .js-pane-detail) {
+        flex-basis: calc(100vh - 330px) !important;
+        height: calc(100vh - 330px) !important;
+        min-height: 340px;
+    }
+
+    /* Tighter vertical rhythm between stacked elements */
+    div[data-testid="stVerticalBlock"] { gap: 0.65rem; }
 
     .js-hero {
         background: linear-gradient(120deg, #101c3d 0%, #1c3a72 55%, #2563eb 100%);
@@ -81,9 +106,6 @@ _CSS = """
     }
     div[data-testid="stMetric"] label { font-size: 0.78rem; }
     div[data-testid="stMetricValue"] { font-size: 1.35rem; }
-
-    /* Slim the vertical gaps between stacked kanban cards */
-    div[data-testid="stVerticalBlockBorderWrapper"] { margin-bottom: -6px; }
 </style>
 """
 st.markdown(_CSS, unsafe_allow_html=True)
@@ -98,7 +120,10 @@ STAGE_LABELS = {
     JobStatus.ARCHIVED.value: "🗄️ Archived",
 }
 
-BOARD_HEIGHT = 520  # px — kanban columns scroll internally instead of the page
+# Sentinel heights: the CSS above rewrites these to calc(100vh - N) so panes
+# always fit the viewport. Keep the values unique — they double as selectors.
+BOARD_HEIGHT = 521
+DETAIL_HEIGHT = 601
 
 
 def status_pill(status: str) -> str:
@@ -269,6 +294,10 @@ if settings.auto_scan_interval_minutes > 0:
 
 jobs: list[dict] = api_get(f"/users/{USER_ID}/jobs")
 jobs_df = pd.DataFrame(jobs) if jobs else pd.DataFrame()
+if not jobs_df.empty:
+    # pandas turns JSON nulls into NaN, which is truthy in Python and renders
+    # as the literal string "nan" — normalise every missing value back to None.
+    jobs_df = jobs_df.astype(object).where(pd.notna(jobs_df), None)
 
 # ── KPI Row ──────────────────────────────────────────────────────────────
 
@@ -278,7 +307,8 @@ def count(status: str) -> int:
     return int((jobs_df["status"] == status).sum())
 
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Discovered", count("discovered") + count("drafting"))
+k1.metric("In Triage", count("discovered") + count("drafting"),
+          help="Discovered listings plus drafts awaiting your review")
 k2.metric("Applied", count("applied"))
 k3.metric("Interviewing", count("interviewing"))
 k4.metric("Offers", count("offer"))
@@ -375,6 +405,7 @@ with tab_board:
                 stage_jobs = jobs_df[jobs_df["status"] == stage]
                 st.markdown(f"###### {STAGE_LABELS[stage]} · {len(stage_jobs)}")
                 with st.container(height=BOARD_HEIGHT, border=False):
+                    st.markdown("<span class='js-pane-board'></span>", unsafe_allow_html=True)
                     if stage_jobs.empty:
                         st.caption("Empty")
                     else:
@@ -403,7 +434,7 @@ with tab_tracker:
             table = view.copy()
             table["stage"] = table["status"].map(lambda s: STAGE_LABELS.get(s, s))
             table["match"] = table["match_score"].map(lambda s: f"{s:.0f}%")
-            table["salary"] = table["salary"].fillna("Not listed") if "salary" in table else "Not listed"
+            table["salary"] = table["salary"].map(lambda v: v or "Not listed")
             table["applied on"] = table["applied_at"].map(fmt_ts)
             table["last update"] = table["updated_at"].map(fmt_ts)
 
@@ -436,7 +467,8 @@ with tab_detail:
 
         left, right = st.columns([3, 2], gap="medium")
 
-        with left, st.container(height=600, border=False):
+        with left, st.container(height=DETAIL_HEIGHT, border=False):
+            st.markdown("<span class='js-pane-detail'></span>", unsafe_allow_html=True)
             st.markdown(f"### {job['title']}")
             st.markdown(
                 f"{status_pill(job['status'])} &nbsp; {score_span(job['match_score'])} match",
@@ -463,7 +495,8 @@ with tab_detail:
                         st.markdown(f"**{q}**")
                         st.write(a)
 
-        with right, st.container(height=600, border=False):
+        with right, st.container(height=DETAIL_HEIGHT, border=False):
+            st.markdown("<span class='js-pane-detail'></span>", unsafe_allow_html=True)
             shot = artifact_url(job.get("screenshot_path"))
             if shot:
                 st.markdown("#### 📸 Form-Fill Proof")

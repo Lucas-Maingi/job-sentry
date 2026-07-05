@@ -18,19 +18,10 @@ class Settings(BaseSettings):
     # ── Job Aggregator Configuration ─────────────────────────────────────
     serper_api_key: str = ""  # Google search API key for job scraping
 
-    # ── LLM Configuration ────────────────────────────────────────────────
+    # ── LLM Configuration (OpenAI-compatible; Groq by default) ──────────
     llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
-
-    # ── User Profile & Resume Data ───────────────────────────────────────
-    resume_text: str = (
-        "Name: Lucas Maingi\n"
-        "Title: Full-Stack AI & Machine Learning Engineer\n"
-        "Skills: Python, FastAPI, Next.js, Postgres, XGBoost, RAG, LangGraph, Docker, CI/CD, Playwright\n"
-        "Location: Nairobi, Kenya (Timezone: GMT+3)\n"
-        "Experience: 13-month ALX Data Science graduate, built OSINT agentic platform, fraud-monitoring engines."
-    )
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "llama-3.3-70b-versatile"
 
     # ── Email Parser Credentials (IMAP) ───────────────────────────────────
     # Used by the email parser to check for application updates.

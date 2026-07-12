@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 
-from job_sentry import __version__
+from job_sentry import __version__, filters
 from job_sentry.browser import FormFiller
 from job_sentry.config import settings
 from job_sentry.copilot import JobCopilot
@@ -33,6 +33,7 @@ from job_sentry.models import (
     UserProfile,
     UserProfileCreate,
 )
+from job_sentry.resume import generate_tailored_resume
 from job_sentry.scraper import JobScraper
 from job_sentry.store import JobStore
 
@@ -100,13 +101,19 @@ app.mount("/artifacts", StaticFiles(directory=settings.artifacts_dir), name="art
 async def execute_job_search_and_triage(user: UserProfile, keywords: str, location: str, store: JobStore):
     """Worker running job scraping, LLM match evaluation, and covers auto-drafting."""
     try:
-        logging.info(f"Triggering scrape for '{keywords}' in '{location}' (user: {user.name})...")
+        # Bias the search query toward the candidate's experience level.
+        query = keywords
+        if user.experience_level and user.experience_level.lower() not in keywords.lower():
+            query = f"{user.experience_level} {keywords}"
+
+        logging.info(f"Triggering scrape for '{query}' in '{location}' (user: {user.name})...")
         scraper = JobScraper()
         copilot = JobCopilot(resume_text=user.resume_text, candidate_name=user.name)
 
         # 1. Fetch search listings
-        listings = scraper.search_jobs(keywords, location)
+        listings = scraper.search_jobs(query, location)
 
+        kept = skipped = 0
         for job in listings:
             # Skip listings this user already tracks (matched by URL)
             existing = store.get_job_by_url(job.url, user_id=user.user_id)
@@ -115,17 +122,29 @@ async def execute_job_search_and_triage(user: UserProfile, keywords: str, locati
 
             job.user_id = user.user_id
 
-            # 2. Evaluate skills match & draft letters
+            # 2. Eligibility gate — don't waste the pipeline on roles the
+            #    candidate is structurally ineligible for (wrong location, or
+            #    a stated salary below their floor).
+            ok, reason = filters.eligible(
+                job, location_mode=user.location_mode, min_salary_usd=user.min_salary_usd
+            )
+            if not ok:
+                skipped += 1
+                logging.info(f"[FILTER] Skipped '{job.title}' — {reason}")
+                continue
+
+            # 3. Evaluate skills match & draft letters
             scored_job = copilot.evaluate_and_draft(job)
 
-            # 3. Transition to DRAFTING if high match, otherwise keep DISCOVERED
+            # 4. Transition to DRAFTING if high match, otherwise keep DISCOVERED
             if scored_job.match_score >= 60.0:
                 scored_job.status = JobStatus.DRAFTING
 
-            # 4. Save to SQLite store
+            # 5. Save to SQLite store
             store.save_job(scored_job)
+            kept += 1
 
-        logging.info("Scrape and AI triage completed successfully.")
+        logging.info(f"Triage complete: kept {kept}, filtered {skipped} ineligible listing(s).")
     except Exception as e:
         logging.error(f"Background triage worker error: {str(e)}")
 
@@ -251,6 +270,26 @@ async def update_cover_letter(job_id: str, payload: CoverLetterUpdate, store: Jo
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     job.cover_letter = payload.cover_letter
+    store.save_job(job)
+    return job
+
+
+@app.post("/jobs/{job_id}/resume", response_model=Job, tags=["pipeline"])
+async def generate_resume(job_id: str, store: JobStore = Depends(get_store)):
+    """Generate an ATS-tailored resume for this specific job from the candidate's
+    master profile, seeded with the posting's keywords. Saves it on the job."""
+    job = store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    user = store.get_user(job.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Candidate profile not found for this job")
+    if not user.resume_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Add your master resume to your profile before generating a tailored resume.",
+        )
+    job.tailored_resume = generate_tailored_resume(user, job)
     store.save_job(job)
     return job
 

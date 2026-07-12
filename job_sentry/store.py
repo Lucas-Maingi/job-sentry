@@ -75,8 +75,12 @@ class JobStore:
 
         # Additive column migrations for databases created by older versions.
         self._add_column_if_missing("users", "resume_path", "TEXT DEFAULT ''")
+        self._add_column_if_missing("users", "location_mode", "TEXT DEFAULT 'remote'")
+        self._add_column_if_missing("users", "experience_level", "TEXT DEFAULT ''")
+        self._add_column_if_missing("users", "min_salary_usd", "INTEGER DEFAULT 0")
         self._add_column_if_missing("jobs", "apply_log", "TEXT DEFAULT ''")
         self._add_column_if_missing("jobs", "screenshot_path", "TEXT")
+        self._add_column_if_missing("jobs", "tailored_resume", "TEXT")
 
         # Copy legacy rows across once, then drop the old table.
         cursor = self._conn.execute(
@@ -110,12 +114,14 @@ class JobStore:
             """
             INSERT OR REPLACE INTO users (
                 user_id, name, email, phone, resume_text, resume_path,
-                default_keywords, default_location, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                default_keywords, default_location, location_mode,
+                experience_level, min_salary_usd, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user.user_id, user.name, user.email, user.phone, user.resume_text,
                 user.resume_path, user.default_keywords, user.default_location,
+                user.location_mode, user.experience_level, user.min_salary_usd,
                 user.created_at.isoformat()
             )
         )
@@ -136,6 +142,7 @@ class JobStore:
         return [self._row_to_user(row) for row in cursor.fetchall()]
 
     def _row_to_user(self, row: sqlite3.Row) -> UserProfile:
+        keys = row.keys()
         return UserProfile(
             user_id=row["user_id"],
             name=row["name"],
@@ -145,6 +152,9 @@ class JobStore:
             resume_path=row["resume_path"] or "",
             default_keywords=row["default_keywords"] or "",
             default_location=row["default_location"] or "",
+            location_mode=(row["location_mode"] if "location_mode" in keys else "remote") or "remote",
+            experience_level=(row["experience_level"] if "experience_level" in keys else "") or "",
+            min_salary_usd=(row["min_salary_usd"] if "min_salary_usd" in keys else 0) or 0,
             created_at=datetime.fromisoformat(row["created_at"])
         )
 
@@ -160,9 +170,9 @@ class JobStore:
             INSERT OR REPLACE INTO jobs (
                 job_id, user_id, title, company, location, description, url,
                 salary, source, match_score, match_reasoning, status, cover_letter,
-                custom_answers_json, apply_log, screenshot_path,
+                tailored_resume, custom_answers_json, apply_log, screenshot_path,
                 discovered_at, applied_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -178,6 +188,7 @@ class JobStore:
                 job.match_reasoning,
                 job.status.value,
                 job.cover_letter,
+                job.tailored_resume,
                 json.dumps(job.custom_answers),
                 job.apply_log,
                 job.screenshot_path,
@@ -257,6 +268,7 @@ class JobStore:
         ]
 
     def _row_to_job(self, row: sqlite3.Row) -> Job:
+        cols = set(row.keys())
         return Job(
             job_id=row["job_id"],
             user_id=row["user_id"] or "",
@@ -271,6 +283,7 @@ class JobStore:
             match_reasoning=row["match_reasoning"] or "",
             status=JobStatus(row["status"]),
             cover_letter=row["cover_letter"],
+            tailored_resume=(row["tailored_resume"] if "tailored_resume" in cols else None),
             custom_answers=json.loads(row["custom_answers_json"] or "{}"),
             apply_log=row["apply_log"] or "",
             screenshot_path=row["screenshot_path"],

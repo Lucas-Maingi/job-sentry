@@ -32,6 +32,10 @@ class UserProfile(BaseModel):
     resume_path: str = ""  # uploaded resume file used for form uploads
     default_keywords: str = "AI Application Engineer Remote"
     default_location: str = "Remote"
+    # Eligibility filters — applied to every scraped listing before it's kept.
+    location_mode: str = "remote"   # "remote" | "nairobi" | "any"
+    experience_level: str = ""       # "", "entry", "mid", "senior"
+    min_salary_usd: int = 0          # 0 = no minimum
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -43,6 +47,9 @@ class UserProfileCreate(BaseModel):
     resume_text: str = ""
     default_keywords: str = "AI Application Engineer Remote"
     default_location: str = "Remote"
+    location_mode: str = "remote"
+    experience_level: str = ""
+    min_salary_usd: int = 0
 
 
 # ── Job Application Data ──────────────────────────────────────────────────
@@ -66,6 +73,7 @@ class Job(BaseModel):
 
     # Auto-fill drafts
     cover_letter: str | None = None
+    tailored_resume: str | None = None  # ATS-plain resume generated for this JD
     custom_answers: dict[str, str] = Field(default_factory=dict)
 
     # Browser automation evidence

@@ -1,0 +1,28 @@
+# Production single-node deployment (e.g. an Oracle Cloud Always-Free VM).
+# Runs the API — which hosts the 24/7 autonomous scanner — and the Streamlit
+# dashboard in ONE container so the dashboard's localhost API URL just works.
+# All secrets come from a local .env file (never commit it). `restart: unless-stopped`
+# keeps the scanner running across crashes and VM reboots.
+
+services:
+  jobsentry:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Persist the DB and uploaded artifacts on the mounted volume, not in the image.
+      - JOBSENTRY_DB_PATH=/data/job_sentry.db
+      - JOBSENTRY_ARTIFACTS_DIR=/data/artifacts
+      - JOBSENTRY_UPLOADS_DIR=/data/uploads
+    ports:
+      - "8000:8000"    # API (with autonomous scanner)
+      - "8501:8501"    # Streamlit dashboard
+    volumes:
+      - jobsentry-data:/data
+    command: >
+      bash -c "python -m uvicorn job_sentry.app:app --host 0.0.0.0 --port 8000 &
+               streamlit run job_sentry/dashboard.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true"
+
+volumes:
+  jobsentry-data:

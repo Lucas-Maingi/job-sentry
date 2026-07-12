@@ -258,6 +258,48 @@ st.sidebar.markdown("## 🤖 Copilot Controls")
 search_keywords = st.sidebar.text_input("Keywords", selected_user.get("default_keywords") or "AI Engineer")
 search_location = st.sidebar.text_input("Location", selected_user.get("default_location") or "Remote")
 
+# Eligibility filters — persisted on the profile so the autonomous scanner uses them too.
+_LOC_LABELS = {
+    "remote": "Remote only (global/Africa-open)",
+    "nairobi": "Nairobi (hybrid/onsite) + open-remote",
+    "any": "Any location",
+}
+_loc_keys = list(_LOC_LABELS.keys())
+_cur_loc = selected_user.get("location_mode") or "remote"
+loc_mode = st.sidebar.selectbox(
+    "Eligibility filter", _loc_keys,
+    index=_loc_keys.index(_cur_loc) if _cur_loc in _loc_keys else 0,
+    format_func=lambda k: _LOC_LABELS[k],
+    help="Listings that fail this are dropped before scoring, so you never burn an application on a role you can't take.",
+)
+_EXP = ["", "entry", "mid", "senior"]
+_cur_exp = selected_user.get("experience_level") or ""
+exp_level = st.sidebar.selectbox(
+    "Experience level", _EXP,
+    index=_EXP.index(_cur_exp) if _cur_exp in _EXP else 0,
+    format_func=lambda x: x.title() if x else "Any",
+)
+min_salary = st.sidebar.number_input(
+    "Min salary (USD/yr, 0 = any)", min_value=0, step=5000,
+    value=int(selected_user.get("min_salary_usd") or 0),
+    help="Only excludes a job when it states a number below this — never for unknown pay.",
+)
+
+if st.sidebar.button("💾 Save filters to profile", use_container_width=True):
+    try:
+        api_send("PUT", f"/users/{USER_ID}", {
+            "name": selected_user["name"], "email": selected_user["email"],
+            "phone": selected_user.get("phone", ""),
+            "resume_text": selected_user.get("resume_text", ""),
+            "default_keywords": search_keywords, "default_location": search_location,
+            "location_mode": loc_mode, "experience_level": exp_level,
+            "min_salary_usd": int(min_salary),
+        })
+        st.toast("Filters saved to your profile.", icon="💾")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Could not save filters: {error_detail(e)}")
+
 if st.sidebar.button("🔍 Scan for new jobs", use_container_width=True, type="primary"):
     try:
         api_send("POST", f"/users/{USER_ID}/search",
@@ -495,6 +537,29 @@ with tab_detail:
                         st.markdown(f"**{q}**")
                         st.write(a)
 
+            # ATS-tailored resume for this specific job.
+            st.markdown("**📄 ATS-tailored resume**")
+            if st.button("Generate ATS resume", key=f"resume_{job['job_id']}"):
+                with st.spinner("Tailoring your resume to this job description..."):
+                    try:
+                        updated = api_send("POST", f"/jobs/{job['job_id']}/resume", {})
+                        job["tailored_resume"] = updated.get("tailored_resume")
+                        st.toast("Tailored resume generated.", icon="📄")
+                    except Exception as e:
+                        st.error(f"Resume generation failed: {error_detail(e)}")
+            if job.get("tailored_resume"):
+                st.text_area(
+                    "Copy this into an ATS-plain document per application",
+                    value=job["tailored_resume"], height=260, key=f"resume_text_{job['job_id']}",
+                )
+                st.download_button(
+                    "⬇️ Download as .txt",
+                    data=job["tailored_resume"],
+                    file_name=f"{selected_user['name'].replace(' ', '_')}_{job['company'].replace(' ', '_')}.txt",
+                    mime="text/plain",
+                    key=f"resume_dl_{job['job_id']}",
+                )
+
         with right, st.container(height=DETAIL_HEIGHT, border=False):
             st.markdown("<span class='js-pane-detail'></span>", unsafe_allow_html=True)
             shot = artifact_url(job.get("screenshot_path"))
@@ -536,6 +601,10 @@ with tab_profile:
                         "name": ep_name, "email": ep_email, "phone": ep_phone,
                         "resume_text": ep_resume,
                         "default_keywords": ep_keywords, "default_location": ep_location,
+                        # Preserve the eligibility filters set in the sidebar.
+                        "location_mode": selected_user.get("location_mode", "remote"),
+                        "experience_level": selected_user.get("experience_level", ""),
+                        "min_salary_usd": int(selected_user.get("min_salary_usd") or 0),
                     })
                     st.toast("Profile updated!", icon="✅")
                     st.rerun()
